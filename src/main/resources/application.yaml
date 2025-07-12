@@ -1,0 +1,27 @@
+server:
+  port: 9000
+
+spring:
+  application:
+    name: ants
+
+app:
+  services:
+    ants:
+      name: ants-service
+      url: https://games-test.datsteam.dev/api
+      token: ??
+
+logging:
+  level:
+    root: INFO
+    ru:
+      clever:
+        antsattacks:
+          client: DEBUG
+
+feign:
+  client:
+    config:
+      default:
+        loggerLevel: FULL

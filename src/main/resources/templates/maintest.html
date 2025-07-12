@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ru" xmlns:th="http://www.thymeleaf.org">
+<head>
+<!--  <meta charset="UTF-8" http-equiv="refresh" content="3"/>-->
+  <title>HEX Grid - Canvas</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="hex-grid"></canvas>
+
+<script th:inline="javascript">
+  /*<![CDATA[*/
+
+  const json = JSON.parse([[${mapJson}]]);
+
+  const ants = json.ants;
+  const enemies = json.enemies;
+  const map = json.map;
+  const food = json.food;
+  const turnNo = json.turnNo;
+  const nextTurnIn = json.nextTurnIn;
+  const home = json.home;
+  const score = json.score;
+  const spot = json.spot;
+  /*]]>*/
+</script>
+
+<script>
+  const canvas = document.getElementById("hex-grid");
+  const ctx = canvas.getContext("2d");
+
+  let width = window.innerWidth;
+  let height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+
+  // Настройки
+  let hexSize = 35;
+  let zoom = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  let isDragging = false;
+  let lastMouseX = 0;
+  let lastMouseY = 0;
+
+  const savedOffsetX = localStorage.getItem("cameraOffsetX");
+  const savedOffsetY = localStorage.getItem("cameraOffsetY");
+  const savedZoom = localStorage.getItem("cameraZoom");
+
+
+  if (savedOffsetX !== null && savedOffsetY !== null && savedZoom !== null) {
+    offsetX = parseFloat(savedOffsetX);
+    offsetY = parseFloat(savedOffsetY);
+    zoom = parseFloat(savedZoom);
+  } else {
+    // Центровка на муравейнике, если в localStorage нет данных
+    const homeHex = map.find(cell => cell.type === 1);
+    if (homeHex) {
+      const metrics = getHexMetrics(hexSize);
+      const { hexWidth } = metrics;
+      const { q, r } = homeHex;
+
+      const offsetXRow = (r % 2) * (hexWidth / 2);
+      const worldX = q * metrics.horizStep + offsetXRow;
+      const worldY = r * metrics.vertStep;
+
+      offsetX = -worldX;
+      offsetY = -worldY;
+    }
+  }
+
+  // // Автоматическое центрирование на первом гексе с type = 1
+  // const homeHex = map.find(cell => cell.type === 1);
+  // if (homeHex) {
+  //   const metrics = getHexMetrics(hexSize);
+  //   const { hexWidth, hexHeight } = metrics;
+  //   const { q, r } = homeHex;
+  //
+  //   // Центр гекса в мировых координатах
+  //   const offsetXRow = (r % 2) * (hexWidth / 2);
+  //   const worldX = q * metrics.horizStep + offsetXRow;
+  //   const worldY = r * metrics.vertStep;
+  //
+  //   // Центрируем камеру на этом гексе
+  //   offsetX = -worldX;
+  //   offsetY = -worldY;
+  // }
+
+  function updateTitle() {
+    document.title = `⏳ ${nextTurnIn.toFixed(2)} сек | 🏆 Очки: ${score}`;
+  }
+
+  function drawTooltip() {
+    if (!hoveredHex) return;
+
+    const textLines = hoveredHex.infoText;
+    const padding = 8;
+    const lineHeight = 16;
+    const boxWidth = 360;
+    const boxHeight = padding * 2 + lineHeight * textLines.length;
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.fillRect(hoveredHex.cx + hexSize, hoveredHex.cy - 10, boxWidth, boxHeight);
+
+    ctx.strokeStyle = "black";
+    ctx.strokeRect(hoveredHex.cx + hexSize, hoveredHex.cy - 10, boxWidth, boxHeight);
+
+    ctx.fillStyle = "black";
+    ctx.font = "14px sans-serif";
+
+    for (let i = 0; i < textLines.length; i++) {
+      ctx.fillText(textLines[i], hoveredHex.cx + hexSize + padding+170, hoveredHex.cy + i * lineHeight + 6);
+    }
+  }
+
+  function saveData() {
+    navigator.clipboard.writeText(infoForCopy.text.join('\r\n'));
+  }
+
+  function getHexMetrics(size) {
+    const hexWidth = Math.sqrt(3) * size;
+    const hexHeight = size * 2;
+    const vertStep = hexHeight * 0.75;
+    const horizStep = hexWidth;
+    return { hexWidth, hexHeight, vertStep, horizStep };
+  }
+
+  function worldToScreen(x, y) {
+    return {
+      x: (x + offsetX) * zoom + width / 2,
+      y: (y + offsetY) * zoom + height / 2
+    };
+  }
+
+  function screenToWorld(sx, sy) {
+    return {
+      x: (sx - width / 2) / zoom - offsetX,
+      y: (sy - height / 2) / zoom - offsetY
+    };
+  }
+
+  function saveCameraState() {
+    localStorage.setItem("cameraOffsetX", offsetX);
+    localStorage.setItem("cameraOffsetY", offsetY);
+    localStorage.setItem("cameraZoom", zoom);
+  }
+
+  function drawHexGrid() {
+    ctx.clearRect(0, 0, width, height);
+
+    const metrics = getHexMetrics(hexSize);
+    const { hexWidth, hexHeight, vertStep, horizStep } = metrics;
+
+    // Вычисляем границы в координатах мира
+    const worldLeft = (-width / 2 / zoom) - offsetX;
+    const worldRight = (width / 2 / zoom) - offsetX;
+    const worldTop = (-height / 2 / zoom) - offsetY;
+    const worldBottom = (height / 2 / zoom) - offsetY;
+
+    const colStart = Math.floor(worldLeft / horizStep) - 1;
+    const colEnd = Math.ceil(worldRight / horizStep) + 1;
+    const rowStart = Math.floor(worldTop / vertStep) - 1;
+    const rowEnd = Math.ceil(worldBottom / vertStep) + 1;
+
+    for (let row = rowStart; row < rowEnd; row++) {
+      for (let col = colStart; col < colEnd; col++) {
+        const offsetXRow = (row % 2) * (hexWidth / 2);
+        const x = col * horizStep + offsetXRow;
+        const y = row * vertStep;
+
+        const points = [];
+        for (let i = 0; i < 6; i++) {
+          const angle = Math.PI / 180 * (60 * i - 30); // Pointy-topped
+          const px = x + hexSize * Math.cos(angle);
+          const py = y + hexSize * Math.sin(angle);
+          const { x: sx, y: sy } = worldToScreen(px, py);
+          points.push({ x: sx, y: sy });
+        }
+
+        // Рисуем шестиугольник
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < 6; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.closePath();
+
+        // Определяем q и r, соответствующие этой ячейке
+        const q = col;
+        const r = row;
+
+        // Ищем ячейку в map
+        const cell = map.find(cell => cell.q === q && cell.r === r);
+
+        if (cell) {
+          switch (cell.type) {
+            case 1: ctx.fillStyle = "rgba(147,75,17,0.5)"; break; // Муравейник
+            case 2: ctx.fillStyle = "rgb(255,255,255)"; break; // Пусто
+            case 3: ctx.fillStyle = "rgba(32,32,147,0.5)"; break; // Грязь
+            case 4: ctx.fillStyle = "rgba(1,255,13,0.89)"; break; // Кислота
+            case 5: ctx.fillStyle = "rgb(255,0,0)"; break; // Камни
+            default: ctx.fillStyle = "rgba(255,255,255,0.98)";
+          }
+          ctx.fill();
+        } else {
+          ctx.fillStyle = "rgba(0,0,0,0.71)";
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = "black";
+        ctx.stroke();
+
+        const { x: cx, y: cy } = worldToScreen(x, y);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        // Определяем объекты в ячейке
+        const antsHere = ants.filter(ant => ant.q === q && ant.r === r);
+        const enemiesHere = enemies.filter(ant => ant.q === q && ant.r === r);
+        const foodHere = food.find(fd => fd.q === q && fd.r === r);
+        const homeHere = home.find(h => h.q === q && h.r === r);
+
+        let emoji = "";
+        if (antsHere.length > 0) {
+          emoji += `🐜x${antsHere.length}`;
+        }
+
+        if (enemiesHere.length > 0) {
+          emoji += `👿x${enemiesHere.length}`;
+        }
+
+        if (homeHere) {
+          emoji += "🏠";
+        }
+
+        if (foodHere) {
+          switch (foodHere.type) {
+            case 1: emoji += "🍎x" + foodHere.amount; break;
+            case 2: emoji += "🍞x" + foodHere.amount; break;
+            case 3: emoji += "🍯x" + foodHere.amount; break;
+            default: emoji += "🍲x" + foodHere.amount; break;
+          }
+        }
+
+        if (emoji) {
+          // Смайлик сверху
+          ctx.font = `${hexSize * 0.4}px serif`;
+          ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+          ctx.fillText(emoji, cx, cy - hexSize * 0.2);
+
+          // Координаты снизу
+          ctx.font = "12px sans-serif";
+          ctx.fillStyle = "rgba(0, 0, 0)";
+          ctx.fillText(`${q},${r}`, cx, cy + hexSize * 0.3);
+        } else {
+          ctx.font = "12px sans-serif";
+          ctx.fillStyle = "rgba(0, 0, 0)";
+          ctx.fillText(`${q},${r}`, cx, cy);
+        }
+      }
+    }
+    updateTitle();
+  }
+
+  function resizeCanvas() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    drawHexGrid();
+  }
+
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const zoomFactor = 1.1;
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+    const oldZoom = zoom;
+
+    if (e.deltaY < 0) {
+      zoom *= zoomFactor;
+    } else {
+      zoom /= zoomFactor;
+    }
+
+    // Сохраняем точку под курсором неподвижной при зуме
+    const { x: wx, y: wy } = screenToWorld(mouseX, mouseY);
+    offsetX -= wx * (zoom - oldZoom) / zoom;
+    offsetY -= wy * (zoom - oldZoom) / zoom;
+
+    drawHexGrid();
+    saveCameraState();
+  }, { passive: false });
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (e.button === 0) {
+      isDragging = true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    }
+  });
+
+  window.addEventListener("mouseup", () => {
+    isDragging = false;
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (isDragging) {
+      const dx = (e.clientX - lastMouseX) / zoom;
+      const dy = (e.clientY - lastMouseY) / zoom;
+      offsetX += dx;
+      offsetY += dy;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+      drawHexGrid();
+      saveCameraState();
+    }
+  });
+
+  window.addEventListener("resize", resizeCanvas);
+
+  window.addEventListener("dblclick", (e) => {
+    saveData();
+  })
+
+  window.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const worldPos = screenToWorld(mouseX, mouseY);
+
+
+    const metrics = getHexMetrics(hexSize);
+    const { hexWidth, vertStep, horizStep } = metrics;
+
+    const mouseR = Math.round(worldPos.y / vertStep);
+    const offsetXRow = (mouseR % 2) * (hexWidth / 2);
+    const mouseQ = Math.round((worldPos.x - offsetXRow) / horizStep);
+
+    const cell = map.find(c => c.q === mouseQ && c.r === mouseR);
+
+    // if (cell || map.some(a => a.q === mouseQ && a.r === mouseR)) {
+      const antsHere = ants.filter(a => a.q === mouseQ && a.r === mouseR);
+      const foodHere = food.filter(f => f.q === mouseQ && f.r === mouseR);
+      const enemiesHere = enemies.filter(a => a.q === mouseQ && a.r === mouseR);
+
+      const info = [`Координаты: ${mouseQ},${mouseR}`];
+      const textForInfo = [`{"q": ${mouseQ}, "r": ${mouseR}}`];
+
+      if (cell) {
+        let typeName = "Неизвестный";
+        switch (cell.type) {
+          case 1: typeName = "Муравейник"; break;
+          case 2: typeName = "Пусто"; break;
+          case 3: typeName = "Грязь"; break;
+          case 4: typeName = "Кислота"; break;
+          case 5: typeName = "Камни"; break;
+        }
+        info.push(`Гекс: ${typeName}`);
+      }
+
+      const typeNames = { 0: "Рабочий", 1: "Боец", 2: "Разведчик" };
+      const healthTypes = {0: 130, 1: 180, 2:80};
+      const foodNames = { 0: "Нет", 1: "🍎", 2: "🍞", 3: "🍯" };
+      if (antsHere.length > 0) {
+
+        antsHere.forEach(a => {
+          info.push(`Муравей: ${typeNames[a.type]} (HP: ${a.health}/${healthTypes[a.type]}, Еда: ${foodNames[a.food.type]}=${a.food.amount})`)
+        })
+
+        textForInfo.push(antsHere
+          .map(a => `${a.id}: ${typeNames[a.type] || 'Неизвестный'}`).join('\n'));
+      }
+
+      if (enemiesHere.length > 0) {
+        enemiesHere.forEach(a => {
+          info.push(`Враг: ${typeNames[a.type]} (HP: ${a.health}/${healthTypes[a.type]}, Еда: ${foodNames[a.food.type]}=${a.food.amount})`)
+        })
+        textForInfo.push(enemiesHere
+          .map(a => `${a.id}: ${typeNames[a.type] || 'Неизвестный'}`).join('\n'));
+      }
+
+      if (foodHere.length > 0) {
+        foodHere.forEach(a => {
+          info.push(`Еда:${foodNames[a.type]}x${a.amount}`)
+        })
+      }
+
+      hoveredHex = {
+        q: mouseQ,
+        r: mouseR,
+        cx: worldToScreen(0, 0).x - offsetX * zoom,
+        cy: worldToScreen(0, 0).y - offsetY * zoom,
+        infoText: info
+      };
+
+      infoForCopy = {
+        text: textForInfo
+      };
+
+      drawHexGrid();
+      drawTooltip();
+    // } else {
+    //   hoveredHex = null;
+    //   drawHexGrid();
+    // }
+  });
+
+  //Остановка/запуск автообновления
+  let autoRefreshEnabled = true;
+  let refreshTimer = null;
+
+  function startAutoRefresh() {
+    refreshTimer = setTimeout(() => {
+      location.reload();
+    }, 1000); // 1 секунда
+    autoRefreshEnabled = true;
+    console.log("✅ Автообновление включено");
+  }
+
+  function stopAutoRefresh() {
+    clearTimeout(refreshTimer);
+    autoRefreshEnabled = false;
+    console.log("⏸ Автообновление остановлено");
+  }
+
+  // Стартуем автообновление по умолчанию
+  startAutoRefresh();
+
+  // Переключатель по клавише Enter
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      if (autoRefreshEnabled) {
+        stopAutoRefresh();
+      } else {
+        startAutoRefresh();
+      }
+    }
+  });
+
+  drawHexGrid();
+</script>
+
+</body>
+</html>
