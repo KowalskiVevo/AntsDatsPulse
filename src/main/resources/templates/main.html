@@ -605,7 +605,7 @@
         console.log("✅ Команда скопирована в буфер");
       });
 
-      const response = fetch("https://games-test.datsteam.dev/api/move", {
+      const response = fetch("https://games.datsteam.dev/api/move", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -722,7 +722,7 @@
   function startAutoRefresh() {
     refreshTimer = setTimeout(() => {
       location.reload();
-    }, 1000); // 1 секунда
+    }, 2000); // 3 секунд
     autoRefreshEnabled = true;
     console.log("✅ Автообновление включено");
   }

@@ -9,7 +9,8 @@ app:
   services:
     ants:
       name: ants-service
-      url: https://games-test.datsteam.dev/api
+#      url: https://games-test.datsteam.dev/api
+      url: https://games.datsteam.dev/api
       token: ??
 
 logging:
