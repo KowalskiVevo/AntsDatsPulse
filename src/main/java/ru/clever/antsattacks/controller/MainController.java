@@ -25,7 +25,9 @@ public class MainController {
 
   @GetMapping("/test")
   public String getMapTest(Model model) {
+
     model.addAttribute("mapJson", StaticStrings.JSON_TEST);
     return "maintest";
   }
+  
 }

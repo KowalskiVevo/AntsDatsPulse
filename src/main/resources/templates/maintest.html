@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru" xmlns:th="http://www.thymeleaf.org">
 <head>
-<!--  <meta charset="UTF-8" http-equiv="refresh" content="3"/>-->
+  <!--  <meta charset="UTF-8" http-equiv="refresh" content="3"/>-->
   <title>HEX Grid - Canvas</title>
   <style>
     html, body {
@@ -283,6 +283,59 @@
     drawHexGrid();
   }
 
+  function hexDistance(a, b) {
+    return Math.max(
+        Math.abs(a.q - b.q),
+        Math.abs(a.r - b.r),
+        Math.abs(-a.q - a.r + b.q + b.r)
+    );
+  }
+
+  function hexLerp(a, b, t) {
+    return {
+      q: a.q + (b.q - a.q) * t,
+      r: a.r + (b.r - a.r) * t
+    };
+  }
+
+  function hexRound(qr) {
+    let q = qr.q;
+    let r = qr.r;
+    let s = -q - r;
+
+    let rq = Math.round(q);
+    let rr = Math.round(r);
+    let rs = Math.round(s);
+
+    const qDiff = Math.abs(rq - q);
+    const rDiff = Math.abs(rr - r);
+    const sDiff = Math.abs(rs - s);
+
+    if (qDiff > rDiff && qDiff > sDiff) {
+      rq = -rr - rs;
+    } else if (rDiff > sDiff) {
+      rr = -rq - rs;
+    } else {
+      rs = -rq - rr;
+    }
+
+    return { q: rq, r: rr };
+  }
+
+  function hexLine(a, b) {
+    const N = hexDistance(a, b);
+    const results = [];
+
+    for (let i = 1; i <= N; i++) {
+      const t = i / N;
+      const interpolated = hexLerp(a, b, t);
+      const rounded = hexRound(interpolated);
+      results.push(rounded);
+    }
+
+    return results;
+  }
+
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     const zoomFactor = 1.1;
@@ -333,8 +386,88 @@
   window.addEventListener("resize", resizeCanvas);
 
   window.addEventListener("dblclick", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const worldPos = screenToWorld(mouseX, mouseY);
+    const metrics = getHexMetrics(hexSize);
+    const { hexWidth, vertStep, horizStep } = metrics;
+
+    const mouseR = Math.round(worldPos.y / vertStep);
+    const offsetXRow = (mouseR % 2) * (hexWidth / 2);
+    const mouseQ = Math.round((worldPos.x - offsetXRow) / horizStep);
+
+    const antsHere = ants.filter(a => a.q === mouseQ && a.r === mouseR);
+    if (antsHere.length > 0) {
+      const selectedAnt = antsHere[0]; // верхний
+      localStorage.setItem("selectedAntId", selectedAnt.id);
+      localStorage.setItem("selectedAntQ", mouseQ);
+      localStorage.setItem("selectedAntR", mouseR);
+    }
     saveData();
   })
+
+  window.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const worldPos = screenToWorld(mouseX, mouseY);
+    const metrics = getHexMetrics(hexSize);
+    const { hexWidth, vertStep, horizStep } = metrics;
+
+    const mouseR = Math.round(worldPos.y / vertStep);
+    const offsetXRow = (mouseR % 2) * (hexWidth / 2);
+    const mouseQ = Math.round((worldPos.x - offsetXRow) / horizStep);
+
+    // Читаем выбранного муравья
+    const antId = localStorage.getItem("selectedAntId");
+    const fromQ = parseInt(localStorage.getItem("selectedAntQ"));
+    const fromR = parseInt(localStorage.getItem("selectedAntR"));
+
+    if (antId) {
+
+      const path = hexLine({ q: fromQ, r: fromR }, { q: mouseQ, r: mouseR });
+
+      const command = {
+        moves: [
+          {
+            ant: antId,
+            path: path
+          }
+        ]
+      };
+
+      const commandText = JSON.stringify(command, null, 2);
+      console.log("📦 MOVE JSON:\n", commandText);
+
+      // Копируем в буфер обмена
+      navigator.clipboard.writeText(commandText).then(() => {
+        console.log("✅ Команда скопирована в буфер");
+      });
+
+      const response = fetch("https://games-test.datsteam.dev/api/move", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Auth-Token": "4bc995f1-f59c-4a68-833e-647eaaf500a3"
+        },
+        body: commandText
+      });
+
+      if (response.ok) {
+        console.log("✅ Команда отправлена успешно");
+      } else {
+        console.error("❌ Ошибка при отправке команды");
+      }
+
+    } else {
+      console.log("❗ Сначала выберите юнита двойным кликом");
+    }
+  });
 
   window.addEventListener("mousemove", (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -353,66 +486,66 @@
     const cell = map.find(c => c.q === mouseQ && c.r === mouseR);
 
     // if (cell || map.some(a => a.q === mouseQ && a.r === mouseR)) {
-      const antsHere = ants.filter(a => a.q === mouseQ && a.r === mouseR);
-      const foodHere = food.filter(f => f.q === mouseQ && f.r === mouseR);
-      const enemiesHere = enemies.filter(a => a.q === mouseQ && a.r === mouseR);
+    const antsHere = ants.filter(a => a.q === mouseQ && a.r === mouseR);
+    const foodHere = food.filter(f => f.q === mouseQ && f.r === mouseR);
+    const enemiesHere = enemies.filter(a => a.q === mouseQ && a.r === mouseR);
 
-      const info = [`Координаты: ${mouseQ},${mouseR}`];
-      const textForInfo = [`{"q": ${mouseQ}, "r": ${mouseR}}`];
+    const info = [`Координаты: ${mouseQ},${mouseR}`];
+    const textForInfo = [`{"q": ${mouseQ}, "r": ${mouseR}}`];
 
-      if (cell) {
-        let typeName = "Неизвестный";
-        switch (cell.type) {
-          case 1: typeName = "Муравейник"; break;
-          case 2: typeName = "Пусто"; break;
-          case 3: typeName = "Грязь"; break;
-          case 4: typeName = "Кислота"; break;
-          case 5: typeName = "Камни"; break;
-        }
-        info.push(`Гекс: ${typeName}`);
+    if (cell) {
+      let typeName = "Неизвестный";
+      switch (cell.type) {
+        case 1: typeName = "Муравейник"; break;
+        case 2: typeName = "Пусто"; break;
+        case 3: typeName = "Грязь"; break;
+        case 4: typeName = "Кислота"; break;
+        case 5: typeName = "Камни"; break;
       }
+      info.push(`Гекс: ${typeName}`);
+    }
 
-      const typeNames = { 0: "Рабочий", 1: "Боец", 2: "Разведчик" };
-      const healthTypes = {0: 130, 1: 180, 2:80};
-      const foodNames = { 0: "Нет", 1: "🍎", 2: "🍞", 3: "🍯" };
-      if (antsHere.length > 0) {
+    const typeNames = { 0: "Рабочий", 1: "Боец", 2: "Разведчик" };
+    const healthTypes = {0: 130, 1: 180, 2:80};
+    const foodNames = { 0: "Нет", 1: "🍎", 2: "🍞", 3: "🍯" };
+    if (antsHere.length > 0) {
 
-        antsHere.forEach(a => {
-          info.push(`Муравей: ${typeNames[a.type]} (HP: ${a.health}/${healthTypes[a.type]}, Еда: ${foodNames[a.food.type]}=${a.food.amount})`)
-        })
+      antsHere.forEach(a => {
+        info.push(`Муравей: ${typeNames[a.type]} (HP: ${a.health}/${healthTypes[a.type]}, Еда: ${foodNames[a.food.type]}=${a.food.amount})`)
+      })
 
-        textForInfo.push(antsHere
-          .map(a => `${a.id}: ${typeNames[a.type] || 'Неизвестный'}`).join('\n'));
-      }
+      textForInfo.push(antsHere
+      .map(a => `${a.id}: ${typeNames[a.type] || 'Неизвестный'}`).join('\n'));
+    }
 
-      if (enemiesHere.length > 0) {
-        enemiesHere.forEach(a => {
-          info.push(`Враг: ${typeNames[a.type]} (HP: ${a.health}/${healthTypes[a.type]}, Еда: ${foodNames[a.food.type]}=${a.food.amount})`)
-        })
-        textForInfo.push(enemiesHere
-          .map(a => `${a.id}: ${typeNames[a.type] || 'Неизвестный'}`).join('\n'));
-      }
+    if (enemiesHere.length > 0) {
+      enemiesHere.forEach(a => {
+        info.push(`Враг: ${typeNames[a.type]} (HP: ${a.health}/${healthTypes[a.type]}, Еда: ${foodNames[a.food.type]}=${a.food.amount})`)
+      })
+      textForInfo.push(enemiesHere
+      .map(a => `${a.id}: ${typeNames[a.type] || 'Неизвестный'}`).join('\n'));
+    }
 
-      if (foodHere.length > 0) {
-        foodHere.forEach(a => {
-          info.push(`Еда:${foodNames[a.type]}x${a.amount}`)
-        })
-      }
+    if (foodHere.length > 0) {
+      foodHere.forEach(a => {
+        info.push(`Еда:${foodNames[a.type]}x${a.amount}`)
+      })
+    }
 
-      hoveredHex = {
-        q: mouseQ,
-        r: mouseR,
-        cx: worldToScreen(0, 0).x - offsetX * zoom,
-        cy: worldToScreen(0, 0).y - offsetY * zoom,
-        infoText: info
-      };
+    hoveredHex = {
+      q: mouseQ,
+      r: mouseR,
+      cx: worldToScreen(0, 0).x - offsetX * zoom,
+      cy: worldToScreen(0, 0).y - offsetY * zoom,
+      infoText: info
+    };
 
-      infoForCopy = {
-        text: textForInfo
-      };
+    infoForCopy = {
+      text: textForInfo
+    };
 
-      drawHexGrid();
-      drawTooltip();
+    drawHexGrid();
+    drawTooltip();
     // } else {
     //   hoveredHex = null;
     //   drawHexGrid();
@@ -426,7 +559,7 @@
   function startAutoRefresh() {
     refreshTimer = setTimeout(() => {
       location.reload();
-    }, 1000); // 1 секунда
+    }, 2000); // 1 секунда
     autoRefreshEnabled = true;
     console.log("✅ Автообновление включено");
   }
@@ -440,6 +573,10 @@
   // Стартуем автообновление по умолчанию
   startAutoRefresh();
 
+  window.addEventListener("auxclick", (e) => {
+
+  })
+
   // Переключатель по клавише Enter
   window.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -447,6 +584,24 @@
         stopAutoRefresh();
       } else {
         startAutoRefresh();
+      }
+    } else if (e.key === "Control") {
+      const homeHex = map.find(cell => cell.type === 1);
+      if (homeHex) {
+        const metrics = getHexMetrics(hexSize);
+        const { hexWidth } = metrics;
+        const { q, r } = homeHex;
+
+        const offsetXRow = (r % 2) * (hexWidth / 2);
+        const worldX = q * metrics.horizStep + offsetXRow;
+        const worldY = r * metrics.vertStep;
+
+        offsetX = -worldX;
+        offsetY = -worldY;
+
+        localStorage.setItem("cameraOffsetX", offsetX);
+        localStorage.setItem("cameraOffsetY", offsetY);
+        localStorage.setItem("cameraZoom", zoom);
       }
     }
   });
