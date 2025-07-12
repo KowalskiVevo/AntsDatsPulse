@@ -336,6 +336,148 @@
     return results;
   }
 
+  // Преобразование odd-r (col, row) -> cube
+  function oddrToCube(col, row) {
+    const x = col - Math.floor(row / 2);
+    const z = row;
+    const y = -x - z;
+    return { x, y, z };
+  }
+
+  // Обратно: cube -> odd-r
+  function cubeToOddr(cube) {
+    const col = cube.x + Math.floor(cube.z / 2);
+    const row = cube.z;
+    return { q: col, r: row };
+  }
+
+  // Интерполяция кубических координат
+  function cubeLerp(a, b, t) {
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      z: a.z + (b.z - a.z) * t
+    };
+  }
+
+  // Округление кубов
+  function cubeRound(c) {
+    let rx = Math.round(c.x);
+    let ry = Math.round(c.y);
+    let rz = Math.round(c.z);
+
+    const x_diff = Math.abs(rx - c.x);
+    const y_diff = Math.abs(ry - c.y);
+    const z_diff = Math.abs(rz - c.z);
+
+    if (x_diff > y_diff && x_diff > z_diff) {
+      rx = -ry - rz;
+    } else if (y_diff > z_diff) {
+      ry = -rx - rz;
+    } else {
+      rz = -rx - ry;
+    }
+
+    return { x: rx, y: ry, z: rz };
+  }
+
+  // Расстояние между двумя odd-r клетками
+  function hexDistanceOddR(a, b) {
+    const ac = oddrToCube(a.q, a.r);
+    const bc = oddrToCube(b.q, b.r);
+    return Math.max(
+        Math.abs(ac.x - bc.x),
+        Math.abs(ac.y - bc.y),
+        Math.abs(ac.z - bc.z)
+    );
+  }
+
+  // Финальная функция генерации пути
+  function hexLineOddR(start, end) {
+    const startCube = oddrToCube(start.q, start.r);
+    const endCube = oddrToCube(end.q, end.r);
+    const distance = hexDistanceOddR(start, end);
+    const results = [];
+
+    for (let i = 1; i <= distance; i++) {
+      const t = i / distance;
+      const interpolated = cubeLerp(startCube, endCube, t);
+      const rounded = cubeRound(interpolated);
+      const offset = cubeToOddr(rounded);
+      results.push(offset); // { q, r }
+    }
+
+    return results;
+  }
+
+  const ODDR_DIRECTIONS = [
+    { dq: +1, dr: 0 },
+    { dq: 0, dr: +1 },
+    { dq: -1, dr: +1 },
+    { dq: -1, dr: 0 },
+    { dq: -1, dr: -1 },
+    { dq: 0, dr: -1 }
+  ];
+
+  function getOddrNeighbors(q, r) {
+    const dirs = ODDR_DIRECTIONS.map(d => {
+      const evenRow = r % 2 === 0;
+      let nq = q + d.dq;
+      if (!evenRow && (d.dr === -1 || d.dr === +1)) nq += 1;
+      return { q: nq, r: r + d.dr };
+    });
+    return dirs;
+  }
+
+  function findPathOddR(start, end, map) {
+    const blockedSet = new Set(
+        map.filter(cell => cell.type === 5).map(cell => `${cell.q},${cell.r}`)
+    );
+
+    const visited = new Set();
+    const queue = [];
+    const cameFrom = new Map();
+
+    const startKey = `${start.q},${start.r}`;
+    const endKey = `${end.q},${end.r}`;
+
+    queue.push(start);
+    visited.add(startKey);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const key = `${current.q},${current.r}`;
+
+      if (key === endKey) break;
+
+      const neighbors = getOddrNeighbors(current.q, current.r);
+      for (const n of neighbors) {
+        const nKey = `${n.q},${n.r}`;
+        if (visited.has(nKey)) continue;
+        if (blockedSet.has(nKey)) continue;
+
+        visited.add(nKey);
+        cameFrom.set(nKey, current);
+        queue.push(n);
+      }
+    }
+
+    // Восстановление пути
+    if (!cameFrom.has(endKey)) {
+      console.warn("❌ Путь не найден (заблокирован)");
+      return [];
+    }
+
+    const path = [];
+    let current = end;
+    while (`${current.q},${current.r}` !== startKey) {
+      path.unshift(current);
+      current = cameFrom.get(`${current.q},${current.r}`);
+    }
+
+    return path;
+  }
+
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     const zoomFactor = 1.1;
@@ -442,7 +584,13 @@
 
     if (antIds.length > 0) {
 
-      const path = hexLine({ q: fromQ, r: fromR }, { q: mouseQ, r: mouseR });
+      // const path = hexLine({ q: fromQ, r: fromR }, { q: mouseQ, r: mouseR });
+      // const path = hexLineOddR({ q: fromQ, r: fromR }, { q: mouseQ, r: mouseR });
+      const path = findPathOddR(
+          { q: fromQ, r: fromR },
+          { q: mouseQ, r: mouseR },
+          map
+      );
 
       const moves = antIds.map(antId => ({
         ant: antId,
@@ -574,7 +722,7 @@
   function startAutoRefresh() {
     refreshTimer = setTimeout(() => {
       location.reload();
-    }, 2000); // 1 секунда
+    }, 1000); // 1 секунда
     autoRefreshEnabled = true;
     console.log("✅ Автообновление включено");
   }
